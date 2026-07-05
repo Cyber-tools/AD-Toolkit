@@ -1,0 +1,17 @@
+# Normalisation des fins de ligne pour un depot multi-plateforme.
+# Par defaut : normalise en LF dans le depot, restitue selon la plateforme.
+* text=auto
+
+# Les scripts PowerShell doivent rester en CRLF (execution sous Windows).
+*.ps1  text eol=crlf
+*.psd1 text eol=crlf
+*.psm1 text eol=crlf
+
+# Documentation et configuration : LF.
+*.md   text eol=lf
+*.json text eol=lf
+
+# Fichiers binaires (jamais alteres).
+*.png  binary
+*.pdf  binary
+*.dll  binary

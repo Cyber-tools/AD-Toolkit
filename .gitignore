@@ -1,0 +1,35 @@
+# =====================================================================
+# NE JAMAIS versionner les rapports d'execution : ils contiennent les
+# mots de passe initiaux EN CLAIR et des captures d'ecran du serveur.
+# =====================================================================
+
+# Dossier de rapports par defaut (et toute variante)
+Rapports/
+rapports/
+C:/Rapports/
+
+# Rapports d'execution et captures, ou qu'ils soient
+Init-WindowsServer_*
+*.pdf
+*.docx
+*.doc
+captures/
+*.png
+
+# Recapitulatifs et fichier d'etat locaux
+state.json
+*.log
+
+# Bibliotheques PDF optionnelles deposees localement (non redistribuees)
+lib/
+*.dll
+
+# Fichiers de configuration remplis (peuvent contenir des secrets : DSRM, mot de passe commun)
+config.local.psd1
+config.local.json
+
+# Outils et environnements locaux (non lies au projet)
+.vs/
+.vscode/
+.idea/
+*.tmp
