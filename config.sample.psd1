@@ -35,7 +35,7 @@
 
     # --- Phase 2 : politique de mot de passe / verrouillage du DOMAINE (ANSSI) ---
     # Appliquee au domaine entier via Set-ADDefaultDomainPasswordPolicy. Apply=$false
-    # laisse la politique du domaine inchangee. Valeurs alignees ANSSI / module B1-M8.
+    # laisse la politique du domaine inchangee. Valeurs alignees sur les recommandations ANSSI.
     DomainPasswordPolicy = @{
         Apply              = $false   # $true pour appliquer la politique ci-dessous
         MinLength          = 12       # ANSSI >= 12 (16 pour acces distant/comptes sensibles)
@@ -43,12 +43,12 @@
         HistoryCount       = 24
         MaxAgeDays         = 90       # 0 = pas d'expiration
         MinAgeDays         = 1
-        LockoutThreshold   = 5        # module B1-M8 : 5 (3 pour acces distant)
+        LockoutThreshold   = 5        # 5 tentatives (3 pour un acces distant)
         LockoutDurationMin = 15
         LockoutWindowMin   = 15
     }
 
-    # --- Phase 2 : audit des acces AD (module B1-M9, lecture seule) ---
+    # --- Phase 2 : audit des acces AD (lecture seule) ---
     # Liste les membres des groupes privilegies, les comptes dormants et a risque.
     # Aucune modification. Fonctionne aussi en mode -Unattended.
     AccessAudit = @{
@@ -57,7 +57,7 @@
     }
 
     # NB : les etapes prestataires (comptes a duree limitee), delegation de controle
-    # sur OU et preparation Windows LAPS sont INTERACTIVES (module B1-M9) : elles ne
+    # sur OU et preparation Windows LAPS sont INTERACTIVES : elles ne
     # sont pas pilotees par ce fichier et n'apparaissent qu'en execution interactive.
 
     # --- Phase 2 : structure AD (modele AGDLP) ---
@@ -99,9 +99,9 @@
     # La regle 4.2 (WSUS) n'est appliquee QUE si WsusUrl ci-dessous est renseignee.
     WsusUrl = ''                     # ex: 'http://srv-wsus:8530'
     GPOs = @(
-        # Exemple : pack de durcissement ANSSI + mesures du module B1-M8
+        # Exemple : pack de durcissement ANSSI
         @{ Name = 'GPO_Durcissement_ANSSI'; Rules = @('1.4','2.2','2.4','2.5','2.6','3.1','3.2','8.1','8.2','8.4','9.1'); LinkTo = 'Siege' }
-        @{ Name = 'GPO_Postes_B1M8';        Rules = @('1.5','4.5','6.3','7.4'); LinkTo = 'Direction' }
+        @{ Name = 'GPO_Postes_Durcis';     Rules = @('1.5','4.5','6.3','7.4'); LinkTo = 'Direction' }
     )
 
     # --- Phase 2 : partages (droits accordes aux GDL uniquement : modele AGDLP) ---
@@ -111,7 +111,7 @@
             Name     = 'Direction'
             Path     = 'C:\Partages\Direction'   # vide : C:\Partages\<Name>
             ResetAcl = $true                     # heritage NTFS desactive + ACL repartant de zero
-            Abe      = $true                     # module B1-M9 : enumeration basee sur l'acces (ABE)
+            Abe      = $true                     # enumeration basee sur l'acces (ABE)
             Grants   = @(
                 @{ Group = 'GDL_Direction_RW'; Rights = @('Modify') }
             )
@@ -123,10 +123,9 @@
     Roles = @()
 
     # --- Rapport d'execution (PDF + captures d'ecran) ---
-    # ATTENTION : le rapport PDF contient les mots de passe EN CLAIR. Stockez le
-    # dossier en lieu sur et excluez-le de tout depot Git (voir .gitignore fourni).
+    # Par defaut, les mots de passe ne figurent PAS dans le rapport : ils vont dans
+    # un fichier a acces restreint (Administrateurs + SYSTEME). Excluez tout de meme
+    # le dossier de tout depot Git (voir .gitignore fourni).
     Report = @{
-        Directory     = 'C:\Rapports'   # rapports .pdf/.txt et sous-dossier captures\
-        NoScreenshots = $false          # $true : desactive les captures d'ecran (Server Core)
-    }
-}
+        Directory        = 'C:\Rapports'   # rapports .pdf/.txt, captures\ et fichier d'identifiants
+        NoScreenshots    = $false          # $true : desactive les captures d'ecran (Serv

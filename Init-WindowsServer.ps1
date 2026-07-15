@@ -25,11 +25,14 @@
     journalise chaque action et genere un rapport d'execution au format PDF (sans
     Microsoft Office : module PSWritePDF, DLL PdfSharp, impression HTML via
     Edge/Microsoft Print to PDF ou generateur PDF natif integre, repli HTML)
-    incluant le tableau des comptes crees avec leurs mots de passe initiaux EN
-    CLAIR et une capture d'ecran de fin de chaque grande etape.
+    incluant le tableau des comptes crees et une capture d'ecran de fin de chaque
+    grande etape.
 
-    ATTENTION : le rapport contient des mots de passe en clair. Stockez-le en lieu
-    sur, detruisez-le apres distribution et excluez C:\Rapports\ de tout depot Git.
+    SECURITE DES MOTS DE PASSE : par defaut, les mots de passe initiaux ne figurent
+    PAS dans le rapport partageable. Ils sont ecrits dans un fichier a acces
+    restreint (Administrateurs + SYSTEME, ACL par SID) et le changement est impose a
+    la premiere connexion. Le commutateur -IncludePasswordsInReport (a assumer)
+    reactive l'ancien comportement (mots de passe en clair dans le rapport).
 
     Une fonction de reinitialisation (protegee par la saisie exacte du mot 'biere')
     supprime tout ce que le script a cree et trace : objets AD, GPO, partages et,
@@ -72,7 +75,7 @@
     Simulation : affiche les actions qui seraient realisees sans les executer.
 
 .NOTES
-    Version   : 7.3.0
+    Version   : 7.4.0
     Cible     : Windows Server 2019 / 2022 / 2025 - Windows PowerShell 5.1+
     Etat      : %ProgramData%\InitWindowsServer\state.json (objets crees traces)
     Journaux  : %ProgramData%\InitWindowsServer\Logs\
@@ -95,7 +98,14 @@ param(
     [switch]$Reset,
 
     [Parameter()]
-    [switch]$NoScreenshots
+    [switch]$NoScreenshots,
+
+    # Par defaut, les mots de passe initiaux ne sont PAS ecrits dans le rapport
+    # partageable (PDF/HTML) : ils vont dans un fichier a acces restreint
+    # (Administrateurs + SYSTEME). Ce commutateur reactive l'ancien comportement
+    # (mots de passe en clair dans le rapport) si vous l'assumez.
+    [Parameter()]
+    [switch]$IncludePasswordsInReport
 )
 
 # =====================================================================
@@ -105,13 +115,14 @@ param(
 
 # Propagation explicite des parametres du script vers la portee script :
 # les fonctions (Invoke-Main notamment) les consomment via $script:Param*.
-$script:ParamConfigFile    = $ConfigFile
-$script:ParamUnattended    = [bool]$Unattended
-$script:ParamReset         = [bool]$Reset
-$script:ParamNoScreenshots = [bool]$NoScreenshots
+$script:ParamConfigFile             = $ConfigFile
+$script:ParamUnattended             = [bool]$Unattended
+$script:ParamReset                  = [bool]$Reset
+$script:ParamNoScreenshots          = [bool]$NoScreenshots
+$script:ParamIncludePasswordsInReport = [bool]$IncludePasswordsInReport
 
 $script:ScriptName    = 'Init-WindowsServer'
-$script:ScriptVersion = '7.3.0'
+$script:ScriptVersion = '7.4.0'
 $script:ScriptPath    = $PSCommandPath
 
 $script:StateDir     = Join-Path -Path $env:ProgramData -ChildPath 'InitWindowsServer'
@@ -138,16 +149,16 @@ $script:Defaults = @{
     PasswordLength  = 14
 }
 
-# --- Politique de mot de passe/verrouillage du domaine (ANSSI, alignee module B1-M8).
+# --- Politique de mot de passe/verrouillage du domaine (ANSSI).
 # Appliquee par Invoke-DomainPasswordPolicyStep via Set-ADDefaultDomainPasswordPolicy.
 # Valeurs surchargeables via la section 'DomainPasswordPolicy' du fichier de configuration.
 $script:DomainPasswordPolicyDefaults = @{
-    MinLength          = 12    # ANSSI : >= 12 (module B1-M8 : 12 au siege)
+    MinLength          = 12    # ANSSI : >= 12 caracteres
     Complexity         = $true
     HistoryCount       = 24    # ANSSI : 24 mots de passe memorises
     MaxAgeDays         = 90    # 0 = pas d'expiration (ANSSI tolere si mot de passe long)
     MinAgeDays         = 1
-    LockoutThreshold   = 5     # module B1-M8 : 5 tentatives
+    LockoutThreshold   = 5     # 5 tentatives (verrouillage de compte)
     LockoutDurationMin = 15
     LockoutWindowMin   = 15
     ReversibleEncryption = $false
@@ -205,7 +216,7 @@ $script:GpoCatalog = [ordered]@{
         )
     }
     '1.5' = @{
-        Label    = 'BitLocker : sauvegarder les clés des lecteurs de données dans l''AD (module B1-M8 P4)'
+        Label    = 'BitLocker : sauvegarder les clés des lecteurs de données dans l''AD'
         Settings = @(
             @{ Key = 'HKLM\SOFTWARE\Policies\Microsoft\FVE'; ValueName = 'FDVRecovery';                    Type = 'DWord'; Value = 1 }
             @{ Key = 'HKLM\SOFTWARE\Policies\Microsoft\FVE'; ValueName = 'FDVManageDRA';                    Type = 'DWord'; Value = 1 }
@@ -240,7 +251,7 @@ $script:GpoCatalog = [ordered]@{
         )
     }
     '2.5' = @{
-        Label    = 'Désactiver SMBv1 côté serveur (WannaCry / EternalBlue) (module B1-M8)'
+        Label    = 'Désactiver SMBv1 côté serveur (WannaCry / EternalBlue)'
         Settings = @(
             @{ Key = 'HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'; ValueName = 'SMB1'; Type = 'DWord'; Value = 0 }
         )
@@ -317,7 +328,7 @@ $script:GpoCatalog = [ordered]@{
         )
     }
     '4.5' = @{
-        Label    = 'Bloquer l''écriture sur le stockage amovible (USB) (module B1-M8 P4)'
+        Label    = 'Bloquer l''écriture sur le stockage amovible (USB)'
         Settings = @(
             @{ Key = 'HKLM\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}'; ValueName = 'Deny_Write'; Type = 'DWord'; Value = 1 }
         )
@@ -362,7 +373,7 @@ $script:GpoCatalog = [ordered]@{
         )
     }
     '6.3' = @{
-        Label    = 'Masquer le dernier identifiant et verrouiller sur inactivité (module B1-M8)'
+        Label    = 'Masquer le dernier identifiant et verrouiller sur inactivité'
         Settings = @(
             @{ Key = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'; ValueName = 'dontdisplaylastusername'; Type = 'DWord'; Value = 1 }
             @{ Key = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'; ValueName = 'InactivityTimeoutSecs';   Type = 'DWord'; Value = 600 }
@@ -486,6 +497,8 @@ $script:CurrentStep  = 'Initialisation'
 $script:Config       = $null
 $script:IsUnattended = $false
 $script:State        = $null
+$script:IncludePasswordsInReport = $false                                    # secure by default : mots de passe hors du rapport partageable
+$script:CredentialFilePath       = ''                                        # fichier d'identifiants a acces restreint (rempli a l'execution)
 $script:WsusUrl      = $null
 $script:PasswordMode = $null       # 'Random' ou 'Common'
 $script:CommonUserPassword = $null
@@ -1180,7 +1193,9 @@ function Get-ReportContentModel {
     $items.Add(@{ Type = 'Title'; Text = ("Rapport d'exécution - {0} v{1}" -f $script:ScriptName, $script:ScriptVersion) })
     $items.Add(@{ Type = 'Text'; Text = ('Serveur : {0}    -    Phase : {1}' -f $env:COMPUTERNAME, $PhaseLabel) })
     $items.Add(@{ Type = 'Text'; Text = ('Généré le : {0}' -f (Get-Date -Format 'dd/MM/yyyy HH:mm:ss')) })
-    $items.Add(@{ Type = 'Warning'; Text = 'AVERTISSEMENT : ce document contient des mots de passe EN CLAIR. Stockez-le en lieu sûr, détruisez-le après distribution des comptes et excluez C:\Rapports\ (rapports et captures) de tout dépôt Git.' })
+    if ($script:IncludePasswordsInReport) {
+        $items.Add(@{ Type = 'Warning'; Text = 'AVERTISSEMENT : ce document contient des mots de passe EN CLAIR (option -IncludePasswordsInReport). Stockez-le en lieu sûr, détruisez-le après distribution des comptes et excluez C:\Rapports\ (rapports et captures) de tout dépôt Git.' })
+    }
 
     # 1. Informations cles (IP, domaine, roles... enregistrees via Add-ReportFact)
     $items.Add(@{ Type = 'Heading'; Text = '1. Informations clés' })
@@ -1192,25 +1207,45 @@ function Get-ReportContentModel {
         $items.Add(@{ Type = 'Text'; Text = 'Aucune information clé enregistrée durant cette exécution.' })
     }
 
-    # 2. Comptes crees : Login / Mot de passe (clair) / OU
-    $items.Add(@{ Type = 'Heading'; Text = '2. Comptes créés - Login / Mot de passe (clair) / OU' })
+    # 2. Comptes crees. Par defaut, mot de passe MASQUE (canal securise separe) ;
+    # affiche en clair uniquement avec -IncludePasswordsInReport.
+    if ($script:IncludePasswordsInReport) {
+        $items.Add(@{ Type = 'Heading'; Text = '2. Comptes créés - Login / Mot de passe (clair) / OU' })
+    } else {
+        $items.Add(@{ Type = 'Heading'; Text = '2. Comptes créés - Login / OU (mots de passe dans le fichier sécurisé)' })
+    }
     if ($script:CreatedCreds.Count -gt 0) {
         $items.Add(@{ Type = 'Text'; Text = 'Le changement de mot de passe est imposé à la première connexion de chaque compte (-ChangePasswordAtLogon).' })
-        $loginW = 5
-        $pwdW = 20
-        foreach ($cred in $script:CreatedCreds) {
-            if (([string]$cred.Login).Length -gt $loginW) { $loginW = ([string]$cred.Login).Length }
-            if (([string]$cred.MotDePasse).Length -gt $pwdW) { $pwdW = ([string]$cred.MotDePasse).Length }
-        }
-        $loginW = [Math]::Min($loginW, 24)
-        $pwdW = [Math]::Min($pwdW, 34)
-        $items.Add(@{ Type = 'Mono'; Text = ('{0} | {1} | {2}' -f 'Login'.PadRight($loginW), 'Mot de passe (clair)'.PadRight($pwdW), 'OU') })
-        $items.Add(@{ Type = 'Mono'; Text = ('-' * [Math]::Min(($loginW + $pwdW + 30), 100)) })
-        foreach ($cred in $script:CreatedCreds) {
-            $items.Add(@{ Type = 'Mono'; Text = ('{0} | {1} | {2}' -f ([string]$cred.Login).PadRight($loginW), ([string]$cred.MotDePasse).PadRight($pwdW), [string]$cred.OU) })
+        if ($script:IncludePasswordsInReport) {
+            $loginW = 5
+            $pwdW = 20
+            foreach ($cred in $script:CreatedCreds) {
+                if (([string]$cred.Login).Length -gt $loginW) { $loginW = ([string]$cred.Login).Length }
+                if (([string]$cred.MotDePasse).Length -gt $pwdW) { $pwdW = ([string]$cred.MotDePasse).Length }
+            }
+            $loginW = [Math]::Min($loginW, 24)
+            $pwdW = [Math]::Min($pwdW, 34)
+            $items.Add(@{ Type = 'Mono'; Text = ('{0} | {1} | {2}' -f 'Login'.PadRight($loginW), 'Mot de passe (clair)'.PadRight($pwdW), 'OU') })
+            $items.Add(@{ Type = 'Mono'; Text = ('-' * [Math]::Min(($loginW + $pwdW + 30), 100)) })
+            foreach ($cred in $script:CreatedCreds) {
+                $items.Add(@{ Type = 'Mono'; Text = ('{0} | {1} | {2}' -f ([string]$cred.Login).PadRight($loginW), ([string]$cred.MotDePasse).PadRight($pwdW), [string]$cred.OU) })
+            }
+        } else {
+            $loginW = 5
+            foreach ($cred in $script:CreatedCreds) {
+                if (([string]$cred.Login).Length -gt $loginW) { $loginW = ([string]$cred.Login).Length }
+            }
+            $loginW = [Math]::Min($loginW, 24)
+            $items.Add(@{ Type = 'Mono'; Text = ('{0} | {1}' -f 'Login'.PadRight($loginW), 'OU') })
+            $items.Add(@{ Type = 'Mono'; Text = ('-' * [Math]::Min(($loginW + 30), 100)) })
+            foreach ($cred in $script:CreatedCreds) {
+                $items.Add(@{ Type = 'Mono'; Text = ('{0} | {1}' -f ([string]$cred.Login).PadRight($loginW), [string]$cred.OU) })
+            }
+            $credRef = if ($script:CredentialFilePath) { $script:CredentialFilePath } else { 'fichier identifiants-initiaux_*.txt du dossier des rapports' }
+            $items.Add(@{ Type = 'Text'; Text = "Mots de passe initiaux dans le fichier à accès restreint (Administrateurs uniquement) : $credRef" })
         }
     } else {
-        $items.Add(@{ Type = 'Text'; Text = 'Aucun compte créé durant cette exécution (les mots de passe des exécutions précédentes figurent dans leurs rapports respectifs).' })
+        $items.Add(@{ Type = 'Text'; Text = 'Aucun compte créé durant cette exécution.' })
     }
 
     # 3. Journal des etapes (horodate) + captures d'ecran sous chaque section
@@ -1735,7 +1770,9 @@ function Get-ReportHtml {
     [void]$sb.AppendLine('<style>body{font-family:"Segoe UI",Calibri,Arial,sans-serif;margin:24px}table{border-collapse:collapse;margin:8px 0}td,th{border:1px solid #999;padding:4px 8px;font-size:13px}th{background:#D9E2F3}h1{color:#1F4E79}h2{color:#1F4E79;margin-top:24px}h3{color:#2E74B5;margin-bottom:4px}pre{background:#F5F5F5;padding:8px;font-size:11px;overflow-x:auto}img{max-width:100%;border:1px solid #CCC;margin:6px 0}.warn{color:#C00000;font-weight:bold}</style></head><body>')
     [void]$sb.AppendLine(('<h1>Rapport d''exécution - {0} v{1}</h1>' -f (& $encode $script:ScriptName), (& $encode $script:ScriptVersion)))
     [void]$sb.AppendLine(('<p>Serveur : <b>{0}</b> - Phase : {1} - Généré le : {2}</p>' -f (& $encode $env:COMPUTERNAME), (& $encode $PhaseLabel), (Get-Date -Format 'dd/MM/yyyy HH:mm:ss')))
-    [void]$sb.AppendLine('<p class="warn">AVERTISSEMENT : ce document contient des mots de passe EN CLAIR. Stockez-le en lieu sûr, détruisez-le après distribution et excluez C:\Rapports\ de tout dépôt Git.</p>')
+    if ($script:IncludePasswordsInReport) {
+        [void]$sb.AppendLine('<p class="warn">AVERTISSEMENT : ce document contient des mots de passe EN CLAIR (option -IncludePasswordsInReport). Stockez-le en lieu sûr, détruisez-le après distribution et excluez C:\Rapports\ de tout dépôt Git.</p>')
+    }
 
     [void]$sb.AppendLine('<h2>1. Informations clés</h2><table><tr><th>Paramètre</th><th>Valeur</th></tr>')
     foreach ($name in $script:ReportFacts.Keys) {
@@ -1743,11 +1780,21 @@ function Get-ReportHtml {
     }
     [void]$sb.AppendLine('</table>')
 
-    [void]$sb.AppendLine('<h2>2. Comptes créés</h2><table><tr><th>Login</th><th>Mot de passe (clair)</th><th>OU</th></tr>')
-    foreach ($cred in $script:CreatedCreds) {
-        [void]$sb.AppendLine(('<tr><td>{0}</td><td>{1}</td><td>{2}</td></tr>' -f (& $encode $cred.Login), (& $encode $cred.MotDePasse), (& $encode $cred.OU)))
+    if ($script:IncludePasswordsInReport) {
+        [void]$sb.AppendLine('<h2>2. Comptes créés</h2><table><tr><th>Login</th><th>Mot de passe (clair)</th><th>OU</th></tr>')
+        foreach ($cred in $script:CreatedCreds) {
+            [void]$sb.AppendLine(('<tr><td>{0}</td><td>{1}</td><td>{2}</td></tr>' -f (& $encode $cred.Login), (& $encode $cred.MotDePasse), (& $encode $cred.OU)))
+        }
+        [void]$sb.AppendLine('</table>')
+    } else {
+        [void]$sb.AppendLine('<h2>2. Comptes créés</h2><table><tr><th>Login</th><th>OU</th></tr>')
+        foreach ($cred in $script:CreatedCreds) {
+            [void]$sb.AppendLine(('<tr><td>{0}</td><td>{1}</td></tr>' -f (& $encode $cred.Login), (& $encode $cred.OU)))
+        }
+        [void]$sb.AppendLine('</table>')
+        $credRef = if ($script:CredentialFilePath) { $script:CredentialFilePath } else { 'fichier identifiants-initiaux_*.txt du dossier des rapports' }
+        [void]$sb.AppendLine(('<p>Mots de passe initiaux dans le fichier à accès restreint (Administrateurs uniquement) : <b>{0}</b></p>' -f (& $encode $credRef)))
     }
-    [void]$sb.AppendLine('</table>')
 
     [void]$sb.AppendLine('<h2>3. Journal des étapes</h2>')
     foreach ($section in (Get-JournalSectionList)) {
@@ -2252,7 +2299,7 @@ function Confirm-FileServerRole {
     }
 }
 
-# --- Active l'ABE (Access-Based Enumeration) sur un partage SMB (module B1-M9 P2).
+# --- Active l'ABE (Access-Based Enumeration) sur un partage SMB (Access-Based Enumeration).
 # L'utilisateur ne voit dans le partage que les dossiers/fichiers auxquels il a accès.
 # Non bloquant : journalise l'erreur et retourne $false si le partage est illisible. ---
 function Enable-ShareAbe {
@@ -2568,7 +2615,7 @@ function New-TrackedUser {
         [Parameter(Mandatory)][string]$OuDN,
         [Parameter(Mandatory)][string]$OuLabel,
         [Parameter(Mandatory)][string]$PlainPassword,
-        # Options « compte à durée limitée » (module B1-M9 P7 - prestataires)
+        # Options « compte à durée limitée » (prestataires / comptes a duree limitee)
         [datetime]$AccountExpirationDate,
         [string]$LogonWorkstations
     )
@@ -3203,7 +3250,7 @@ function Get-ObjectValue {
     return $Default
 }
 
-# --- Politique de mot de passe et de verrouillage du DOMAINE (ANSSI + module B1-M8).
+# --- Politique de mot de passe et de verrouillage du DOMAINE (ANSSI).
 # Applique la stratégie de comptes par défaut du domaine (Set-ADDefaultDomainPasswordPolicy) :
 # longueur >= 12, complexité, historique 24, expiration, verrouillage 5/15 min. Les valeurs
 # sont surchargeables via la section 'DomainPasswordPolicy' du fichier de configuration.
@@ -3262,7 +3309,7 @@ function Invoke-DomainPasswordPolicyStep {
     Show-StepSummary -Title 'POLITIQUE DE MOT DE PASSE DU DOMAINE' -Lines $recap
 }
 
-# --- Audit des accès AD (module B1-M9 P1 « Audit AD » + P6 « Zero Trust »).
+# --- Audit des accès AD (inventaire des acces a privileges, approche Zero Trust).
 # LECTURE SEULE : liste les membres des groupes privilégiés, les comptes dormants et
 # les comptes à risque (mot de passe non requis / sans expiration). N'effectue AUCUNE
 # modification (donc rien à tracer pour le reset). Les résultats alimentent le rapport PDF.
@@ -3358,7 +3405,7 @@ function Invoke-ADAccessAuditStep {
     Show-StepSummary -Title 'AUDIT DES ACCÈS AD' -Lines $recap
 }
 
-# --- Comptes prestataires à durée limitée (module B1-M9 P7 « Prestataires »).
+# --- Comptes prestataires à durée limitée (comptes prestataires a duree limitee).
 # Crée une OU dédiée, un GDL dédié, et des comptes qui EXPIRENT automatiquement
 # (Set/New-ADUser -AccountExpirationDate), avec restriction de postes optionnelle
 # (LogonWorkstations) et changement de mot de passe imposé. Mots de passe générés
@@ -3367,7 +3414,7 @@ function Invoke-ContractorAccountStep {
     [CmdletBinding(SupportsShouldProcess)]
     param()
     $script:CurrentStep = 'Comptes prestataires'
-    Write-Log -Level Warn -Message "`n--- Comptes prestataires à durée limitée (module B1-M9) ---" -NoJournal
+    Write-Log -Level Warn -Message "`n--- Comptes prestataires à durée limitée ---" -NoJournal
     $recap = @()
 
     if (-not (Read-YesNo 'Voulez-vous créer des comptes prestataires à durée limitée (expiration automatique) ?')) {
@@ -3441,7 +3488,7 @@ function Invoke-ContractorAccountStep {
     Show-StepSummary -Title 'COMPTES PRESTATAIRES' -Lines $recap
 }
 
-# --- Configuration Windows LAPS côté AD (module B1-M9 bonus « LAPS »).
+# --- Configuration Windows LAPS côté AD (Windows LAPS cote AD).
 # Gère automatiquement le mot de passe de l'administrateur local de chaque poste
 # (unique par machine, stocké dans l'AD, en rotation) : parade au Pass-the-Hash latéral.
 # Cette étape : extension du schéma AD (Update-LapsADSchema, opération de forêt SIGNIFICATIVE)
@@ -3505,7 +3552,7 @@ function Invoke-LapsSetupStep {
     Show-StepSummary -Title 'WINDOWS LAPS (CÔTÉ AD)' -Lines $recap
 }
 
-# --- Délégation de contrôle sur une OU (module B1-M9 P4 « Délégation »).
+# --- Délégation de contrôle sur une OU (delegation de controle sur OU).
 # Applique le moindre privilège d'administration : délègue une tâche précise
 # (réinitialiser les mots de passe, gérer les membres de groupe, créer/supprimer des
 # utilisateurs) à un GROUPE sur une OU, via dsacls, sans droits d'admin du domaine.
@@ -3648,19 +3695,98 @@ function Get-NextUserPassword {
     return New-RandomPassword -Length $length
 }
 
-# --- Tableau recapitulatif des comptes : Login | Mot de passe (clair) | OU.
-# Le meme tableau est repris dans le rapport PDF. ---
+# --- Restreint une ACL de fichier aux seuls Administrateurs + SYSTEME (par SID,
+# donc independant de la langue de l'OS), heritage desactive. ---
+function Set-RestrictiveAcl {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Restreindre l''ACL (Administrateurs + SYSTEME)')) { return }
+    # On repart de l'ACL existante et on ne modifie QUE le DACL (pas le propriétaire :
+    # SetOwner exige un privilège que même un admin n'a pas toujours, et n'est pas
+    # nécessaire pour restreindre l'accès).
+    $acl = Get-Acl -Path $Path
+    $acl.SetAccessRuleProtection($true, $false)   # coupe l'héritage, ne recopie pas les ACE hérités
+    foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }  # retire les ACE explicites
+    $admins = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')  # BUILTIN\Administrators
+    $system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')      # NT AUTHORITY\SYSTEM
+    foreach ($sid in @($admins, $system)) {
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')))
+    }
+    Set-Acl -Path $Path -AclObject $acl -ErrorAction Stop
+}
+
+# --- Ecrit les identifiants initiaux dans un fichier a ACCES RESTREINT
+# (Administrateurs + SYSTEME). C'est le canal de distribution securise par defaut :
+# les mots de passe ne figurent PAS dans le rapport partageable, sauf -IncludePasswordsInReport.
+# Le fichier est trace (categorie Reports) donc supprime par la reinitialisation. ---
+function Export-CredentialFile {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '',
+        Justification = 'Fichier de distribution initiale a acces restreint ; changement impose a la 1ere connexion.')]
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([string])]
+    param()
+    $real = @($script:CreatedCreds | Where-Object { $_.MotDePasse -and ([string]$_.MotDePasse) -notmatch '^\(' })
+    if ($real.Count -eq 0) { return '' }
+    if ($script:CredentialFilePath -and (Test-Path -Path $script:CredentialFilePath)) { return $script:CredentialFilePath }
+    if ($WhatIfPreference) { Write-Log -Level Detail -Message 'WhatIf : fichier d''identifiants non écrit.' -NoJournal; return '' }
+
+    $dir = $script:ReportDirectory
+    if (-not $dir) { $dir = [string](Get-ConfigValue -Path 'Report.Directory' -Default $script:Defaults.ReportDirectory) }
+    try {
+        if (-not (Test-Path -Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
+        $path = Join-Path -Path $dir -ChildPath ('identifiants-initiaux_{0}_{1}.txt' -f $env:COMPUTERNAME, (Get-Date -Format 'yyyyMMdd_HHmmss'))
+        $lines = @(
+            "# Identifiants initiaux - $script:ScriptName - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+            '# Fichier a acces restreint (Administrateurs + SYSTEME).'
+            '# A distribuer de facon securisee PUIS a detruire. Changement impose a la 1ere connexion.'
+            ''
+            ('{0,-24} {1,-34} {2}' -f 'Login', 'Mot de passe initial', 'OU')
+            ('-' * 84)
+        )
+        foreach ($c in $real) { $lines += ('{0,-24} {1,-34} {2}' -f $c.Login, $c.MotDePasse, $c.OU) }
+        Set-Content -Path $path -Value $lines -Encoding UTF8 -ErrorAction Stop
+        try {
+            Set-RestrictiveAcl -Path $path
+        } catch {
+            Write-Log -Level Warn -Message "ACL restrictive non appliquée sur $path ($($_.Exception.Message)) : restreignez ce fichier manuellement."
+        }
+        Add-CreatedObject -Category Reports -Key $path -Entry @{ Path = $path }
+        $script:CredentialFilePath = $path
+        Write-Log -Level Success -Message "Identifiants initiaux écrits dans un fichier à accès restreint : $path"
+        return $path
+    } catch {
+        Write-Log -Level Error -Message "Écriture du fichier d'identifiants impossible : $($_.Exception.Message)"
+        return ''
+    }
+}
+
+# --- Recapitulatif console des comptes crees. Par defaut, les mots de passe ne
+# sont PAS affiches : ils sont ecrits dans un fichier a acces restreint (canal de
+# distribution securise). -IncludePasswordsInReport reaffiche l'ancien tableau. ---
 function Show-CredentialSummary {
     param()
     Write-Log -Level Success -Message "`n----------- RÉCAPITULATIF : COMPTES UTILISATEURS -----------" -NoJournal
     if ($script:CreatedCreds.Count -gt 0) {
-        $table = $script:CreatedCreds |
-            Format-Table -Property Login, @{ Label = 'Mot de passe (clair)'; Expression = { $_.MotDePasse } }, OU -AutoSize |
-            Out-String
-        foreach ($line in ($table -split "`r?`n")) {
-            if ($line.Trim() -ne '') { Write-Log -Message $line -NoJournal }
+        if ($script:IncludePasswordsInReport) {
+            $table = $script:CreatedCreds |
+                Format-Table -Property Login, @{ Label = 'Mot de passe (clair)'; Expression = { $_.MotDePasse } }, OU -AutoSize |
+                Out-String
+            foreach ($line in ($table -split "`r?`n")) {
+                if ($line.Trim() -ne '') { Write-Log -Message $line -NoJournal }
+            }
+            Write-Log -Level Warn -Message 'Mots de passe affichés EN CLAIR (option -IncludePasswordsInReport) : distribuez-les puis détruisez le rapport (jamais dans un dépôt Git).' -NoJournal
+        } else {
+            $table = $script:CreatedCreds |
+                Format-Table -Property Login, OU -AutoSize | Out-String
+            foreach ($line in ($table -split "`r?`n")) {
+                if ($line.Trim() -ne '') { Write-Log -Message $line -NoJournal }
+            }
+            $credPath = Export-CredentialFile
+            if ($credPath) {
+                Write-Log -Level Warn -Message "Mots de passe initiaux dans le fichier à accès restreint : $credPath (Administrateurs uniquement)." -NoJournal
+                Write-Log -Level Detail -Message 'Distribuez-les de façon sécurisée puis détruisez ce fichier. (Rapport PDF sans mot de passe : partageable.)' -NoJournal
+            }
         }
-        Write-Log -Level Warn -Message 'Ces mots de passe initiaux EN CLAIR sont affichés ici et consignés dans le rapport PDF : distribuez-les puis détruisez le rapport (stockage sécurisé, jamais dans un dépôt Git).' -NoJournal
         Write-Log -Level Warn -Message 'Changement de mot de passe imposé à la première connexion (-ChangePasswordAtLogon).' -NoJournal
     } else {
         Write-Log -Level Detail -Message '  (aucun utilisateur créé ou réutilisé durant cette exécution)' -NoJournal
@@ -4067,7 +4193,7 @@ function Invoke-FileServerStep {
             }
         }
 
-        # --- ABE : Access-Based Enumeration (module B1-M9 P2 : masquer ce qui est inaccessible) ---
+        # --- ABE : Access-Based Enumeration (masquer ce qui est inaccessible a l'utilisateur) ---
         if (Read-YesNo "Activer l'énumération basée sur l'accès (ABE) sur '$shareName' (chaque utilisateur ne voit que ce à quoi il a accès) ?") {
             if (Enable-ShareAbe -ShareName $shareName) { $recap += "ABE activée sur le partage '$shareName'" }
         }
@@ -4401,7 +4527,7 @@ function Invoke-SharesFromConfig {
             }
         }
 
-        # ABE (module B1-M9 P2) : activée si le champ 'Abe' vaut $true dans la configuration
+        # ABE (Access-Based Enumeration) : activée si le champ 'Abe' vaut $true dans la configuration
         if ([bool](Get-ObjectValue -Object $shareCfg -Name 'Abe' -Default $false)) {
             if (Enable-ShareAbe -ShareName $shareName) { $recap += "ABE activée sur '$shareName'" }
         }
@@ -4521,7 +4647,7 @@ function Invoke-Phase2 {
         Invoke-ComputerCreationStep
         Invoke-GlobalGroupStep
         Invoke-DomainLocalGroupStep
-        Invoke-ContractorAccountStep    # module B1-M9 P7 : comptes prestataires à durée limitée
+        Invoke-ContractorAccountStep    # comptes prestataires à durée limitée
     }
 
     # --- Arborescence finale de la structure ---
@@ -4540,8 +4666,8 @@ function Invoke-Phase2 {
     } else {
         Invoke-GpoStep
         Invoke-FileServerStep
-        Invoke-DelegationStep       # module B1-M9 P4 : délégation de contrôle sur OU
-        Invoke-LapsSetupStep        # module B1-M9 bonus : Windows LAPS côté AD
+        Invoke-DelegationStep       # délégation de contrôle sur OU
+        Invoke-LapsSetupStep        # Windows LAPS côté AD
     }
     Invoke-RoleInstallationStep
 
@@ -4554,7 +4680,7 @@ function Invoke-Phase2 {
     # --- Recapitulatif final ---
     Show-CredentialSummary
     Show-Banner -Text 'INITIALISATION TERMINÉE AVEC SUCCÈS !'
-    Write-Log -Level Title -Message " Paye une bière à Quentin et Max à l'occaz !" -NoJournal
+    Write-Log -Level Detail -Message 'Vérifiez le rapport et distribuez le fichier d''identifiants de façon sécurisée.' -NoJournal
     Invoke-ReportExport -PhaseLabel 'Phase 2'
 
     # --- Proposition explicite de reinitialisation en fin de script ---
@@ -4906,161 +5032,4 @@ function Invoke-DCDemotion {
     }
     $isLastDC = Read-YesNo 'Ce serveur est-il le DERNIER contrôleur du domaine (le domaine entier sera alors supprimé) ?'
     if (-not (Read-YesNo 'DERNIÈRE CONFIRMATION : lancer la rétrogradation MAINTENANT ?')) {
-        Write-Log -Level Warn -Message 'Rétrogradation ANNULÉE par l''utilisateur.'
-        return
-    }
-
-    # Mot de passe du compte Administrateur LOCAL apres retrogradation
-    do {
-        $localAdminPwd = Read-Host -Prompt 'Nouveau mot de passe Administrateur LOCAL après rétrogradation (12 car. min : majuscule, minuscule, chiffre)' -AsSecureString
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($localAdminPwd)
-        try { $plainCheck = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-        finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-        $pwdValid = Test-StrongPassword -Value $plainCheck
-        $plainCheck = $null
-        if (-not $pwdValid) {
-            Write-Log -Level Error -Message 'Mot de passe trop faible, recommencez.' -NoJournal
-        }
-    } until ($pwdValid)
-
-    if (-not $PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Uninstall-ADDSDomainController (domaine '$domainName')")) { return }
-    try {
-        Import-Module -Name ADDSDeployment -ErrorAction Stop
-        Write-Log -Level Warn -Message "Rétrogradation du contrôleur de domaine '$env:COMPUTERNAME' (domaine '$domainName') lancée."
-        Invoke-ReportExport -PhaseLabel 'Rétrogradation du contrôleur de domaine' -NoTrack
-        if ($isLastDC) {
-            Uninstall-ADDSDomainController -LocalAdministratorPassword $localAdminPwd `
-                -LastDomainControllerInDomain -RemoveApplicationPartitions -IgnoreLastDnsServerForZone `
-                -Force -ErrorAction Stop
-        } else {
-            Uninstall-ADDSDomainController -LocalAdministratorPassword $localAdminPwd -Force -ErrorAction Stop
-        }
-    } catch {
-        Write-Log -Level Error -Message "ÉCHEC de la rétrogradation : $($_.Exception.Message)"
-    }
-}
-
-#endregion
-
-# =====================================================================
-#  REGION 15 : POINT D'ENTREE PRINCIPAL
-# =====================================================================
-#region Point d'entree
-
-function Invoke-Main {
-    [CmdletBinding(SupportsShouldProcess)]
-    param()
-
-    # --- Auto-elevation (les parametres -ConfigFile/-Unattended/-Reset/-WhatIf sont retransmis) ---
-    $windowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($windowsIdentity)
-    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        if (-not $script:ScriptPath) {
-            Write-Log -Level Error -Message 'Chemin du script introuvable : faites un clic droit sur le fichier .ps1 puis ''Exécuter avec PowerShell'' (pas F5 dans ISE).' -NoJournal
-            if (-not $script:ParamUnattended) { $null = Read-Host -Prompt 'Appuyez sur Entrée pour quitter' }
-            return
-        }
-        Write-Log -Level Warn -Message 'Droits administrateur requis : relance du script en élévation...' -NoJournal
-        $exe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
-        $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$script:ScriptPath`""
-        if ($script:ParamConfigFile) { $argList += " -ConfigFile `"$script:ParamConfigFile`"" }
-        if ($script:ParamUnattended) { $argList += ' -Unattended' }
-        if ($script:ParamReset) { $argList += ' -Reset' }
-        if ($script:ParamNoScreenshots) { $argList += ' -NoScreenshots' }
-        if ($WhatIfPreference) { $argList += ' -WhatIf' }
-        Start-Process -FilePath $exe -ArgumentList $argList -Verb RunAs
-        return
-    }
-
-    # --- Confort visuel (console classique uniquement) ---
-    if ($Host.Name -eq 'ConsoleHost') {
-        try {
-            $Host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(120, 35)
-        } catch {
-            Write-Log -Level Detail -Message "Redimensionnement de la console impossible : $($_.Exception.Message)" -NoJournal
-        }
-    }
-
-    # --- Transcript (journal texte complet de la session) ---
-    $transcriptStarted = $false
-    if (-not $WhatIfPreference) {
-        try {
-            if (-not (Test-Path -Path $script:LogDir)) {
-                New-Item -Path $script:LogDir -ItemType Directory -Force | Out-Null
-            }
-            $logPath = Join-Path -Path $script:LogDir -ChildPath ('Init-WindowsServer_{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
-            Start-Transcript -Path $logPath -Append -ErrorAction Stop | Out-Null
-            $transcriptStarted = $true
-        } catch {
-            Write-Log -Level Warn -Message "Transcript non démarré : $($_.Exception.Message)" -NoJournal
-        }
-    }
-
-    try {
-        # --- Chargement de la configuration (facultatif) ---
-        $script:IsUnattended = $script:ParamUnattended
-        if ($script:ParamConfigFile) {
-            try {
-                $resolvedConfig = (Resolve-Path -Path $script:ParamConfigFile -ErrorAction Stop).Path
-                if ($resolvedConfig -match '\.psd1$') {
-                    $script:Config = Import-PowerShellDataFile -Path $resolvedConfig
-                } elseif ($resolvedConfig -match '\.json$') {
-                    $script:Config = Get-Content -Path $resolvedConfig -Raw -Encoding UTF8 | ConvertFrom-Json
-                } else {
-                    throw 'extension non gérée (attendu : .psd1 ou .json)'
-                }
-                Write-Log -Level Success -Message "Configuration chargée : $resolvedConfig"
-            } catch {
-                Write-Log -Level Error -Message "Fichier de configuration illisible : $($_.Exception.Message)"
-                if ($script:IsUnattended) { return }
-            }
-        } elseif ($script:IsUnattended) {
-            Write-Log -Level Warn -Message 'Mode -Unattended sans -ConfigFile : la plupart des étapes seront ignorées (aucune valeur fournie).'
-        }
-
-        $script:State = Get-ScriptState
-        Show-Banner -Text "$script:ScriptName v$script:ScriptVersion"
-        if ($WhatIfPreference) {
-            Write-Log -Level Warn -Message 'MODE SIMULATION (-WhatIf) : aucune modification ne sera appliquée.' -NoJournal
-        }
-
-        if ($script:ParamReset) {
-            Invoke-FactoryReset
-        } else {
-            # --- Detection de phase : controleur de domaine deja promu ? ---
-            $ntds = Get-Service -Name NTDS -ErrorAction SilentlyContinue
-            $isDC = ($null -ne $ntds -and $ntds.Status -eq 'Running')
-            if (-not $isDC -and $script:State.Steps.ADDSPromoted) {
-                Write-Log -Level Warn -Message 'Promotion AD DS déjà lancée mais service NTDS inactif : un redémarrage est probablement nécessaire avant la Phase 2.'
-            }
-            if ($isDC) {
-                Invoke-Phase2
-            } else {
-                Invoke-Phase1
-            }
-        }
-    } catch {
-        Show-Banner -Text 'UNE ERREUR A INTERROMPU LE SCRIPT'
-        Write-Log -Level Error -Message $_.Exception.Message
-        $lineInfo = if ($_.InvocationInfo -and $_.InvocationInfo.Line) { $_.InvocationInfo.Line.Trim() } else { '(inconnue)' }
-        Write-Log -Level Warn -Message ("Ligne : {0}  |  Commande : {1}" -f $_.InvocationInfo.ScriptLineNumber, $lineInfo)
-        Write-Log -Level Warn -Message "Détail complet dans les journaux : $script:LogDir"
-        Invoke-ReportExport -PhaseLabel 'Exécution interrompue par une erreur'
-    } finally {
-        if ($transcriptStarted) {
-            try { Stop-Transcript | Out-Null } catch { Write-Verbose "Stop-Transcript : $($_.Exception.Message)" }
-        }
-    }
-
-    if (-not $script:IsUnattended) {
-        $null = Read-Host -Prompt 'Appuyez sur Entrée pour quitter'
-    }
-}
-
-# Point d'entree : le script s'execute, sauf s'il est dot-source (". .\Init-WindowsServer.ps1"),
-# ce qui permet aux tests Pester de charger les fonctions sans lancer l'outil.
-if ($MyInvocation.InvocationName -ne '.') {
-    Invoke-Main
-}
-
-#endregion
+        Write-Log -Level Warn -Message 'Rétrogradation ANNULÉE par 

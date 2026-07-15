@@ -179,7 +179,7 @@ Describe 'Fichier d''état (schéma v2)' {
     }
 }
 
-Describe 'Catalogue GPO (durcissement ANSSI + module B1-M8)' {
+Describe 'Catalogue GPO (durcissement ANSSI)' {
     It 'contient les nouvelles règles attendues' {
         foreach ($id in @('1.5','2.5','2.6','2.7','2.8','4.5','6.3','7.4','8.1','8.2','8.3','8.4','9.1','9.2','9.3')) {
             $script:GpoCatalog.Contains($id) | Should -BeTrue
@@ -219,7 +219,7 @@ Describe 'Politique de mot de passe du domaine (ANSSI)' {
     }
 }
 
-Describe 'Gestion des droits d''accès (module B1-M9)' {
+Describe 'Gestion des droits d''accès' {
     It 'expose les nouvelles étapes de Phase 2' {
         foreach ($fn in @('Invoke-ADAccessAuditStep', 'Invoke-ContractorAccountStep', 'Invoke-LapsSetupStep', 'Invoke-DelegationStep', 'Enable-ShareAbe')) {
             Get-Command $fn -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
@@ -345,3 +345,4 @@ Describe 'Get-ObjectValue (configuration hashtable et JSON)' {
         Get-ObjectValue -Object @{ Name = 'X' } -Name 'Autre' -Default 'defaut' | Should -Be 'defaut'
     }
 }
+                              

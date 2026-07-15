@@ -1,9 +1,22 @@
 ﻿# CHANGELOG
 
+## v7.4.0 - 2026-07-16
+
+Renforcement cyber et orientation production.
+
+- **Mots de passe secure by default** : les mots de passe initiaux ne sont plus écrits dans le
+  rapport partageable (PDF/HTML) ni affichés dans la console. Ils vont dans un fichier à **accès
+  restreint** (`identifiants-initiaux_*.txt`, ACL Administrateurs + SYSTÈME par SID, héritage
+  coupé), tracé et supprimé par la réinitialisation. Nouveau commutateur `-IncludePasswordsInReport`
+  (ou `Report.IncludePasswords`) pour réactiver l'ancien comportement en connaissance de cause.
+- **Auto-élévation plus robuste** : `-ConfigFile` résolu en chemin absolu avant élévation (le
+  répertoire courant change après UAC) et refus d'UAC géré proprement (`try/catch`).
+- Retrait des références aux modules de formation dans le code, la configuration et la
+  documentation (vocabulaire opérationnel : ANSSI, prestataires, Zero Trust).
+
 ## v7.3.0 - 2026-07-06
 
-Intégration des mesures du module de formation B1-M9 (« Gérer les droits d'accès »). Cinq
-nouvelles capacités de Phase 2 orientées gestion des accès : audit AD, énumération basée sur
+Cinq capacités de Phase 2 orientées gestion des accès : audit AD, énumération basée sur
 l'accès, comptes prestataires à durée limitée, délégation de contrôle et préparation Windows LAPS.
 
 ### Audit des accès AD (lecture seule)
@@ -84,11 +97,11 @@ Passe de relecture complète du script (revue de code adversariale). Défauts co
 
 ## v7.2.0 - 2026-07-06
 
-Intégration des mesures du module de formation B1-M8 (« Sécuriser le poste utilisateur et les
-appareils mobiles ») et renforcement de l'alignement ANSSI. Le catalogue GPO passe de 24 à 39
+Mesures de durcissement du poste et politique de domaine, renforcement de l'alignement ANSSI.
+Le catalogue GPO passe de 24 à 39
 règles (7 à 9 catégories) et une politique de mot de passe de domaine est ajoutée.
 
-### Catalogue GPO enrichi (durcissement ANSSI + module B1-M8)
+### Catalogue GPO enrichi (durcissement ANSSI)
 
 - Nouvelle catégorie **8 : Protection des identifiants (ANSSI)** :
   - 8.1 Désactiver WDigest (`UseLogonCredential=0`, empêche le mot de passe en clair en mémoire).
@@ -118,7 +131,7 @@ règles (7 à 9 catégories) et une politique de mot de passe de domaine est ajo
 - Nouvelle fonction **`Invoke-DomainPasswordPolicyStep`** appliquant, sur confirmation, la
   stratégie de comptes du domaine via `Set-ADDefaultDomainPasswordPolicy` : longueur minimale 12,
   complexité, historique 24, expiration 90 j, âge minimal 1 j, verrouillage 5 tentatives /
-  15 min (valeurs alignées ANSSI et sur le module B1-M8, toutes surchargeables via la section
+  15 min (valeurs alignées ANSSI, toutes surchargeables via la section
   `DomainPasswordPolicy` de la configuration). Étape à portée domaine, non concernée par la
   réinitialisation « biere ».
 
@@ -284,13 +297,4 @@ sur les partages) sont conservées à l'identique.
   `[CmdletBinding(SupportsShouldProcess)]`.
 - **Catalogues externalisés en données pures** : règles GPO (25 règles / 7 catégories,
   `$script:GpoCatalog`), rôles (`$script:RolesCatalog`), niveaux de droits des partages
-  (`$script:ShareRightsCatalog`), la logique d'application est séparée des données.
-- **Encodage et style** : UTF-8 **avec BOM** (compatibilité Windows PowerShell 5.1), accents
-  français homogènes dans tous les textes, indentation espaces uniquement (zéro tabulation),
-  fins de ligne CRLF.
-- **PSScriptAnalyzer : 0 erreur, 0 avertissement** (suppressions ponctuelles justifiées :
-  `Write-Host` dans `Write-Log`, mots de passe volontairement en clair, faux positif
-  `PSAvoidOverwritingBuiltInCmdlets` sur le nom `Write-Log`).
-- Fuseau horaire **configurable** (défaut : `Romance Standard Time`), mot de passe DSRM validé
-  en boucle (généré + consigné au rapport en mode unattended), transcript déplacé vers
-  `%ProgramData%\InitWindowsServer\Logs\`.
+  (`$script:ShareRightsCatalog`), la logique d'app
