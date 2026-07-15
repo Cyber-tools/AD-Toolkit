@@ -345,4 +345,3 @@ Describe 'Get-ObjectValue (configuration hashtable et JSON)' {
         Get-ObjectValue -Object @{ Name = 'X' } -Name 'Autre' -Default 'defaut' | Should -Be 'defaut'
     }
 }
-                              
